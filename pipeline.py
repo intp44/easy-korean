@@ -1,0 +1,145 @@
+"""전체 처리 흐름
+
+터미널(convert.py)과 나중에 만들 화면(Streamlit)이 함께 불러 쓰는 부분입니다.
+
+순서:
+1. prepare_original: 원문 준비 (사진이면 원문 복원, txt면 이름·주소 찾기) → 개인정보 가리기
+   이 단계는 끝까지 다 만든 다음 넘겨줍니다. 가리기 전 글이 먼저 보이면 안 되기 때문입니다.
+2. EasyKoreanStream: 가린 원문을 쉬운 한국어로 바꾸며 조각을 하나씩 내보냅니다.
+   끝까지 성공하면 결과를 검증 자리(verify_result)에 넘기고 _result.txt로 저장합니다.
+   중간에 오류가 나면 아무것도 저장하지 않습니다.
+3. explain_error: 어떤 오류든 쉬운 한국어 설명으로 바꿉니다.
+"""
+
+from pathlib import Path
+
+import anthropic
+
+from image_prep import SUPPORTED_EXTENSIONS, ImageError, prepare_image
+from mark_personal import MarkError, mark_personal
+from redact import redact
+from simplify import ConvertError, MaskedText, stream_easy_korean
+from transcribe import TranscribeError, transcribe
+
+RESULTS_DIR = Path(__file__).resolve().parent / "samples" / "results"
+
+
+class InputError(Exception):
+    """넣은 파일에 문제가 있을 때 쓰는 오류입니다. 메시지는 사용자에게 그대로 보여줍니다."""
+
+
+def is_photo(input_file):
+    return input_file.suffix.lower() in SUPPORTED_EXTENSIONS
+
+
+def check_input_file(input_file):
+    """처리할 수 있는 파일(txt 또는 사진)인지 확인합니다."""
+    if input_file.suffix.lower() != ".txt" and not is_photo(input_file):
+        raise InputError(
+            f"지원하지 않는 파일 형식입니다: {input_file.suffix or '(확장자 없음)'}\n"
+            "txt 파일이나 jpg, jpeg, png, heic 사진을 넣어 주세요."
+        )
+
+
+def prepare_original(client, input_file, report=print):
+    """원문을 준비하고 개인정보를 가린 글(MaskedText)을 돌려줍니다. 가리기 전 글은 저장하지 않습니다.
+    report: 진행 상황 문장을 받을 함수입니다. 터미널은 print, 화면은 화면에 글을 쓰는 함수를 넘기면 됩니다."""
+    check_input_file(input_file)
+
+    if is_photo(input_file):
+        report("[1/4] 사진 준비 중 (방향 바로잡기, 크기 줄이기)")
+        media_type, image_data = prepare_image(input_file)
+        report("[2/4] 원문 복원 중 (사진 속 글자 읽기, 이름·주소 표시)")
+        marked_text = transcribe(client, media_type, image_data)
+        report("[3/4] 개인정보 가리는 중")
+    else:
+        text = input_file.read_text(encoding="utf-8").strip()
+        if not text:
+            raise InputError(f"파일이 비어 있습니다: {input_file.name}")
+        report("[1/3] 이름·주소 찾는 중")
+        marked_text = mark_personal(client, text)
+        report("[2/3] 개인정보 가리는 중")
+
+    masked_text, counts = redact(marked_text)
+    if counts:
+        report("      가린 개인정보: " + ", ".join(f"{label} {n}개" for label, n in counts.items()))
+    else:
+        report("      가린 개인정보: 없음")
+    return MaskedText(masked_text)
+
+
+def save_original(input_file, masked_text):
+    """가린 원문을 samples/results/원본파일이름_original.txt로 저장합니다."""
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = RESULTS_DIR / f"{input_file.stem}_original.txt"
+    path.write_text(masked_text + "\n", encoding="utf-8")
+    return path
+
+
+def verify_result(masked_text, result):
+    """[비어 있는 자리] 원문과 결과 대조 검증
+
+    나중에 여기에 날짜·금액·번호 등이 가린 원문(masked_text)과 쉬운 한국어 결과(result)에서
+    똑같이 들어 있는지 대조하는 기능을 넣습니다.
+    지금은 아무것도 검사하지 않고 None을 돌려줍니다.
+    """
+    return None
+
+
+class EasyKoreanStream:
+    """쉬운 한국어 결과를 조각이 생길 때마다 하나씩 내보내고, 끝까지 성공하면 결과를 모아 저장합니다.
+
+    사용법:
+        stream = EasyKoreanStream(client, masked_text, input_file)
+        for piece in stream:
+            (조각을 화면에 이어 붙여 보여주기)
+        stream.result      # 완성된 전체 결과
+        stream.saved_to    # 저장한 파일 위치
+        stream.check       # 검증 결과 (지금은 None)
+
+    중간에 오류가 나면 for 문에서 오류가 나고, 아무것도 저장되지 않습니다.
+    그때까지 보여준 조각은 완성된 결과가 아니므로 화면에서 지워야 합니다.
+    """
+
+    def __init__(self, client, masked_text, input_file):
+        self.client = client
+        self.masked_text = masked_text
+        self.input_file = input_file
+        self.result = None
+        self.saved_to = None
+        self.check = None
+
+    def __iter__(self):
+        pieces = []
+        for piece in stream_easy_korean(self.client, self.masked_text):
+            pieces.append(piece)
+            yield piece
+
+        # 여기까지 왔다면 변환이 끝까지 성공한 것입니다.
+        result = "".join(pieces)
+        self.check = verify_result(self.masked_text, result)
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = RESULTS_DIR / f"{self.input_file.stem}_result.txt"
+        path.write_text(result + "\n", encoding="utf-8")
+        self.result, self.saved_to = result, path
+
+
+def explain_error(error):
+    """오류를 사용자에게 보여줄 쉬운 한국어 설명으로 바꿉니다."""
+    if isinstance(error, (InputError, ImageError, TranscribeError, MarkError, ConvertError)):
+        return str(error)
+    if isinstance(error, anthropic.AuthenticationError):
+        return "API 키가 올바르지 않습니다. .env 파일의 ANTHROPIC_API_KEY를 확인하세요."
+    if isinstance(error, anthropic.RateLimitError):
+        return "요청이 너무 많습니다. 잠시 후 다시 실행하세요."
+    if isinstance(error, anthropic.APIStatusError):
+        if error.status_code >= 500:
+            return f"Claude 서버에 일시적인 문제가 있습니다 (오류 번호 {error.status_code}). 잠시 뒤 다시 실행하세요."
+        return f"API 오류가 났습니다 ({error.status_code}): {error.message}"
+    if isinstance(error, anthropic.APIConnectionError):
+        return "Claude 서버에 연결하지 못했거나 연결이 끊겼습니다. 인터넷 연결을 확인하고 다시 실행하세요."
+    return f"알 수 없는 오류가 났습니다: {error}"
+
+
+# 화면이나 터미널이 오류를 잡을 때 쓰는 목록입니다.
+KNOWN_ERRORS = (InputError, ImageError, TranscribeError, MarkError, ConvertError, anthropic.APIError)
