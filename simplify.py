@@ -50,6 +50,9 @@ def stream_easy_korean(client, masked_text):
         # 결과를 받는 도중 연결이 끊기면 SDK 오류가 아니라 이 오류가 날 수 있습니다.
         raise ConvertError("쉬운 한국어로 바꾸는 도중 인터넷 연결이 끊겼습니다. 연결을 확인하고 다시 실행하세요.")
 
+    if final.stop_reason is None:
+        # AI가 '끝났다'는 신호를 보내기 전에 연결이 조용히 끊긴 경우입니다. 반쪽 결과이므로 실패로 봅니다.
+        raise ConvertError("쉬운 한국어로 바꾸는 도중 연결이 끊겼습니다. 연결을 확인하고 다시 실행하세요.")
     if final.stop_reason == "refusal":
         raise ConvertError("AI가 이 문서의 변환을 거절했습니다. 문서 내용을 확인해 주세요.")
     if final.stop_reason == "max_tokens":

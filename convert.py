@@ -22,9 +22,11 @@ from pipeline import (
     KNOWN_ERRORS,
     EasyKoreanStream,
     check_input_file,
+    convert_step_message,
     explain_error,
     is_photo,
     prepare_original,
+    remove_old_results,
     save_original,
 )
 
@@ -57,6 +59,9 @@ def main():
     client = anthropic.Anthropic()
     started = time.perf_counter()
 
+    # 실패했을 때 옛 결과가 남아 헷갈리지 않도록, 같은 이름의 옛 결과 파일을 먼저 지웁니다.
+    remove_old_results(input_file)
+
     # 1) 원문 준비와 개인정보 가리기: 끝까지 다 만든 다음 넘겨받습니다.
     try:
         masked_text = prepare_original(client, input_file, report=print)
@@ -65,7 +70,7 @@ def main():
     print(f"      저장했습니다: {save_original(input_file, masked_text)}")
 
     # 2) 쉬운 한국어 변환: 만들어지는 대로 조금씩 보여줍니다.
-    print("[4/4] 쉬운 한국어로 바꾸는 중" if is_photo(input_file) else "[3/3] 쉬운 한국어로 바꾸는 중")
+    print(convert_step_message(is_photo(input_file)))
     print()
     convert_started = time.perf_counter()
     first_piece_at = None

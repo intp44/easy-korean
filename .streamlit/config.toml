@@ -1,0 +1,19 @@
+# 쉬운말 도우미 화면 설정
+
+[browser]
+# 사용 기록을 Streamlit 회사로 보내지 않습니다.
+gatherUsageStats = false
+
+[client]
+# 화면 오른쪽 위 개발자 메뉴를 줄이고, 오류가 나도 코드 내용을 화면에 보여주지 않습니다.
+toolbarMode = "minimal"
+showErrorDetails = "none"
+
+[theme]
+# 밝은 배경에 진한 글자로 대비를 선명하게, 글자는 크게 보여줍니다.
+base = "light"
+primaryColor = "#0B4F9C"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EEF2F7"
+textColor = "#111111"
+baseFontSize = 20

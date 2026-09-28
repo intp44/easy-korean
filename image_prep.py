@@ -29,8 +29,9 @@ class ImageError(Exception):
     """사진을 준비하지 못했을 때 쓰는 오류입니다. 메시지는 사용자에게 그대로 보여줍니다."""
 
 
-def prepare_image(path):
-    """사진 파일을 읽어 (형식, base64 글자) 묶음으로 돌려줍니다."""
+def prepare_image(path, data=None):
+    """사진 파일을 읽어 (형식, base64 글자) 묶음으로 돌려줍니다.
+    data에 사진 내용(바이트)을 주면 파일을 읽지 않고 메모리에 있는 사진을 씁니다. 이때 path는 확장자 확인에만 씁니다."""
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ImageError(
             f"지원하지 않는 파일 형식입니다: {path.suffix or '(확장자 없음)'}\n"
@@ -38,7 +39,7 @@ def prepare_image(path):
         )
 
     try:
-        with Image.open(path) as opened:
+        with Image.open(io.BytesIO(data) if data is not None else path) as opened:
             image = ImageOps.exif_transpose(opened)
             image.load()
     except (UnidentifiedImageError, OSError):

@@ -3,11 +3,13 @@
 터미널(convert.py)과 나중에 만들 화면(Streamlit)이 함께 불러 쓰는 부분입니다.
 
 순서:
-1. prepare_original: 원문 준비 (사진이면 원문 복원, txt면 이름·주소 찾기) → 개인정보 가리기
+1. 원문 준비 (사진이면 원문 복원, 글이면 이름·주소 찾기) → 개인정보 가리기
+   - prepare_original: 컴퓨터에 있는 파일로 준비 (터미널용)
+   - prepare_photo / prepare_text: 메모리에 있는 사진·글로 준비 (화면용, 파일을 만들지 않음)
    이 단계는 끝까지 다 만든 다음 넘겨줍니다. 가리기 전 글이 먼저 보이면 안 되기 때문입니다.
 2. EasyKoreanStream: 가린 원문을 쉬운 한국어로 바꾸며 조각을 하나씩 내보냅니다.
-   끝까지 성공하면 결과를 검증 자리(verify_result)에 넘기고 _result.txt로 저장합니다.
-   중간에 오류가 나면 아무것도 저장하지 않습니다.
+   끝까지 성공하면 결과를 검증 자리(verify_result)에 넘깁니다.
+   저장할 파일을 알려준 경우(터미널)에만 _result.txt로 저장하고, 중간에 오류가 나면 아무것도 저장하지 않습니다.
 3. explain_error: 어떤 오류든 쉬운 한국어 설명으로 바꿉니다.
 """
 
@@ -22,6 +24,9 @@ from simplify import ConvertError, MaskedText, stream_easy_korean
 from transcribe import TranscribeError, transcribe
 
 RESULTS_DIR = Path(__file__).resolve().parent / "samples" / "results"
+
+# 사진 한 장의 최대 용량입니다. 이보다 크면 처리하지 않고 쉬운 말로 알려줍니다.
+MAX_PHOTO_MB = 20
 
 
 class InputError(Exception):
@@ -42,24 +47,42 @@ def check_input_file(input_file):
 
 
 def prepare_original(client, input_file, report=print):
-    """원문을 준비하고 개인정보를 가린 글(MaskedText)을 돌려줍니다. 가리기 전 글은 저장하지 않습니다.
+    """컴퓨터에 있는 파일로 원문을 준비하고 개인정보를 가린 글(MaskedText)을 돌려줍니다. (터미널용)
     report: 진행 상황 문장을 받을 함수입니다. 터미널은 print, 화면은 화면에 글을 쓰는 함수를 넘기면 됩니다."""
     check_input_file(input_file)
-
     if is_photo(input_file):
-        report("[1/4] 사진 준비 중 (방향 바로잡기, 크기 줄이기)")
-        media_type, image_data = prepare_image(input_file)
-        report("[2/4] 원문 복원 중 (사진 속 글자 읽기, 이름·주소 표시)")
-        marked_text = transcribe(client, media_type, image_data)
-        report("[3/4] 개인정보 가리는 중")
-    else:
-        text = input_file.read_text(encoding="utf-8").strip()
-        if not text:
-            raise InputError(f"파일이 비어 있습니다: {input_file.name}")
-        report("[1/3] 이름·주소 찾는 중")
-        marked_text = mark_personal(client, text)
-        report("[2/3] 개인정보 가리는 중")
+        return prepare_photo(client, input_file.name, input_file.read_bytes(), report)
+    return prepare_text(client, input_file.read_text(encoding="utf-8"), report, source=input_file.name)
 
+
+def prepare_photo(client, name, data, report=print):
+    """메모리에 있는 사진(바이트)으로 원문을 복원하고 개인정보를 가린 글을 돌려줍니다. 파일을 만들지 않습니다.
+    name: 사진 파일 이름 (확장자로 형식을 확인합니다)"""
+    if len(data) > MAX_PHOTO_MB * 1024 * 1024:
+        raise InputError(
+            f"사진 용량이 너무 커요 ({len(data) / 1024 / 1024:.0f}MB). {MAX_PHOTO_MB}MB보다 작은 사진을 올려 주세요.\n"
+            "폰 카메라 설정에서 사진 크기를 줄이거나, 화면을 캡처해서 올려도 돼요."
+        )
+    report("[1/4] 사진 준비 중 (방향 바로잡기, 크기 줄이기)")
+    media_type, image_data = prepare_image(Path(name), data=data)
+    report("[2/4] 원문 복원 중 (사진 속 글자 읽기, 이름·주소 표시)")
+    marked_text = transcribe(client, media_type, image_data)
+    report("[3/4] 개인정보 가리는 중")
+    return _hide_personal_info(marked_text, report)
+
+
+def prepare_text(client, text, report=print, source="붙여 넣은 글"):
+    """메모리에 있는 글로 이름·주소를 찾아 표시한 뒤 개인정보를 가린 글을 돌려줍니다. 파일을 만들지 않습니다."""
+    text = text.strip()
+    if not text:
+        raise InputError(f"글이 비어 있습니다: {source}")
+    report("[1/3] 이름·주소 찾는 중")
+    marked_text = mark_personal(client, text)
+    report("[2/3] 개인정보 가리는 중")
+    return _hide_personal_info(marked_text, report)
+
+
+def _hide_personal_info(marked_text, report):
     masked_text, counts = redact(marked_text)
     if counts:
         report("      가린 개인정보: " + ", ".join(f"{label} {n}개" for label, n in counts.items()))
@@ -68,10 +91,29 @@ def prepare_original(client, input_file, report=print):
     return MaskedText(masked_text)
 
 
+def convert_step_message(photo):
+    """쉬운 한국어 변환 단계의 진행 상황 문장입니다."""
+    return "[4/4] 쉬운 한국어로 바꾸는 중" if photo else "[3/3] 쉬운 한국어로 바꾸는 중"
+
+
+def _original_path(input_file):
+    return RESULTS_DIR / f"{input_file.stem}_original.txt"
+
+
+def _result_path(input_file):
+    return RESULTS_DIR / f"{input_file.stem}_result.txt"
+
+
+def remove_old_results(input_file):
+    """같은 이름으로 전에 만든 _original.txt와 _result.txt를 지웁니다. (터미널에서 새로 실행할 때)"""
+    for path in (_original_path(input_file), _result_path(input_file)):
+        path.unlink(missing_ok=True)
+
+
 def save_original(input_file, masked_text):
     """가린 원문을 samples/results/원본파일이름_original.txt로 저장합니다."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = RESULTS_DIR / f"{input_file.stem}_original.txt"
+    path = _original_path(input_file)
     path.write_text(masked_text + "\n", encoding="utf-8")
     return path
 
@@ -87,21 +129,22 @@ def verify_result(masked_text, result):
 
 
 class EasyKoreanStream:
-    """쉬운 한국어 결과를 조각이 생길 때마다 하나씩 내보내고, 끝까지 성공하면 결과를 모아 저장합니다.
+    """쉬운 한국어 결과를 조각이 생길 때마다 하나씩 내보내고, 끝까지 성공하면 결과를 모읍니다.
 
     사용법:
-        stream = EasyKoreanStream(client, masked_text, input_file)
+        stream = EasyKoreanStream(client, masked_text)              # 화면용: 저장하지 않음
+        stream = EasyKoreanStream(client, masked_text, input_file)  # 터미널용: _result.txt로 저장
         for piece in stream:
             (조각을 화면에 이어 붙여 보여주기)
         stream.result      # 완성된 전체 결과
-        stream.saved_to    # 저장한 파일 위치
+        stream.saved_to    # 저장한 파일 위치 (저장하지 않았으면 None)
         stream.check       # 검증 결과 (지금은 None)
 
     중간에 오류가 나면 for 문에서 오류가 나고, 아무것도 저장되지 않습니다.
     그때까지 보여준 조각은 완성된 결과가 아니므로 화면에서 지워야 합니다.
     """
 
-    def __init__(self, client, masked_text, input_file):
+    def __init__(self, client, masked_text, input_file=None):
         self.client = client
         self.masked_text = masked_text
         self.input_file = input_file
@@ -118,10 +161,11 @@ class EasyKoreanStream:
         # 여기까지 왔다면 변환이 끝까지 성공한 것입니다.
         result = "".join(pieces)
         self.check = verify_result(self.masked_text, result)
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        path = RESULTS_DIR / f"{self.input_file.stem}_result.txt"
-        path.write_text(result + "\n", encoding="utf-8")
-        self.result, self.saved_to = result, path
+        if self.input_file is not None:
+            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            self.saved_to = _result_path(self.input_file)
+            self.saved_to.write_text(result + "\n", encoding="utf-8")
+        self.result = result
 
 
 def explain_error(error):
