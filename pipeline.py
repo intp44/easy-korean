@@ -173,7 +173,7 @@ def explain_error(error):
     if isinstance(error, (InputError, ImageError, TranscribeError, MarkError, ConvertError)):
         return str(error)
     if isinstance(error, anthropic.AuthenticationError):
-        return "API 키가 올바르지 않습니다. .env 파일의 ANTHROPIC_API_KEY를 확인하세요."
+        return "API 키가 올바르지 않습니다. 비밀 설정(Secrets)이나 .env 파일의 ANTHROPIC_API_KEY를 확인하세요."
     if isinstance(error, anthropic.RateLimitError):
         return "요청이 너무 많습니다. 잠시 후 다시 실행하세요."
     if isinstance(error, anthropic.APIStatusError):

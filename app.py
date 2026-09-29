@@ -5,10 +5,16 @@
 
 화면은 pipeline.py가 제공하는 기능(원문 준비, 쉬운 한국어 스트림, 에러 설명)만 불러 씁니다.
 올린 사진과 글은 메모리에서만 쓰고, 서버에는 어떤 파일도 저장하지 않습니다.
+
+비밀 설정 (내 맥: .streamlit/secrets.toml / 배포: Streamlit Cloud의 Secrets 칸):
+    APP_PASSWORD       입장 비밀번호. 없으면 아무도 들어올 수 없습니다.
+    ANTHROPIC_API_KEY  Claude API 키. 없으면 .env에서 읽습니다.
 """
 
+import hmac
 import html
 import os
+import time
 from pathlib import Path
 
 import anthropic
@@ -68,13 +74,72 @@ st.markdown(
 )
 
 
+def read_secret(name):
+    """Streamlit 비밀 설정에서 값을 읽습니다. 비밀 설정이 아예 없거나 값이 비어 있으면 None."""
+    try:
+        value = st.secrets.get(name)
+    except Exception:  # 비밀 설정 파일이 하나도 없을 때
+        return None
+    value = str(value).strip() if value is not None else ""
+    return value or None
+
+
 @st.cache_resource
 def get_client():
-    """Claude 연결을 한 번만 만들어 재사용합니다. API 키가 없으면 None을 돌려줍니다."""
+    """Claude 연결을 한 번만 만들어 재사용합니다.
+    API 키는 비밀 설정(ANTHROPIC_API_KEY)을 먼저 찾고, 없으면 .env에서 읽습니다. 둘 다 없으면 None."""
+    api_key = read_secret("ANTHROPIC_API_KEY")
+    if api_key:
+        return anthropic.Anthropic(api_key=api_key)
     load_dotenv(BASE_DIR / ".env")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
     return anthropic.Anthropic()
+
+
+# ── 입장 비밀번호 ──────────────────────────────────────
+MAX_WRONG_TRIES = 5
+LOCK_SECONDS = 60
+
+
+def password_gate():
+    """비밀번호를 맞게 넣어야 변환 화면이 나옵니다. 맞으면 이 접속이 끝날 때까지 다시 묻지 않습니다.
+    비밀번호 설정(APP_PASSWORD)이 없으면 아무도 들어오지 못하게 막습니다."""
+    if st.session_state.get("signed_in"):
+        return
+
+    st.title("📄 쉬운말 도우미")
+    expected = read_secret("APP_PASSWORD")
+    if expected is None:
+        st.error("🔧 관리자 설정이 필요해요. 아직 입장 비밀번호가 정해지지 않았어요.")
+        st.stop()
+
+    locked_for = st.session_state.get("locked_until", 0) - time.time()
+    if locked_for > 0:
+        st.error(f"⛔ 비밀번호를 {MAX_WRONG_TRIES}번 틀려서 잠시 막았어요. {int(locked_for) + 1}초 뒤에 다시 해 주세요.")
+        st.button("🔄 다시 해 보기", use_container_width=True)
+        st.stop()
+
+    with st.form("password_form", clear_on_submit=True):
+        typed = st.text_input("🔑 비밀번호를 입력해 주세요", type="password")
+        submitted = st.form_submit_button("들어가기", type="primary", use_container_width=True)
+
+    if submitted:
+        # 글자를 하나씩 비교하는 데 걸리는 시간으로 비밀번호를 짐작하지 못하게, 안전한 비교 방식을 씁니다.
+        if hmac.compare_digest(typed.encode("utf-8"), expected.encode("utf-8")):
+            st.session_state.signed_in = True
+            st.session_state.wrong_tries = 0
+            st.rerun()
+        st.session_state.wrong_tries = st.session_state.get("wrong_tries", 0) + 1
+        if st.session_state.wrong_tries >= MAX_WRONG_TRIES:
+            st.session_state.wrong_tries = 0
+            st.session_state.locked_until = time.time() + LOCK_SECONDS
+            st.rerun()
+        st.error("비밀번호가 맞지 않아요")
+    st.stop()
+
+
+password_gate()
 
 
 # ── 화면 상태 ──────────────────────────────────────────

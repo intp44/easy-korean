@@ -1,5 +1,7 @@
-anthropic
-python-dotenv
-pillow
-pillow-heif
-streamlit
+# 배포 서버에서 버전이 달라 깨지지 않도록 버전을 고정했습니다.
+# (내 맥 가상환경에서 실제로 시험한 버전 / Python 3.9~3.13에서 설치 가능)
+anthropic==0.125.0
+python-dotenv==1.2.1
+pillow==11.3.0
+pillow-heif==1.1.1
+streamlit==1.50.0
