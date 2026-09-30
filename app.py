@@ -23,7 +23,9 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from pipeline import (
+    RELAY_107_GUIDE,
     EasyKoreanStream,
+    choose_help,
     convert_step_message,
     explain_error,
     prepare_photo,
@@ -74,6 +76,15 @@ st.markdown(
     .missing-box ul { margin: 0; padding-left: 1.2rem; }
     .missing-box li { font-size: 1.1rem; font-weight: 700; }
     .missing-box + .missing-box, .missing-box.second { margin-top: 0.6rem; }
+    /* 문의 문장 칸: 복사 버튼은 그대로, 글씨는 읽기 쉬운 보통 글꼴로 */
+    [data-testid="stCode"] code, [data-testid="stCode"] pre {
+        font-family: inherit !important; font-size: 1rem !important; letter-spacing: normal !important;
+        line-height: 1.8 !important; color: #111 !important;
+    }
+    .relay-guide {
+        background: #E8F0FB; border: 2px solid #0B4F9C; border-radius: 12px;
+        padding: 0.8rem 1rem; color: #111; line-height: 1.8; white-space: pre-wrap; margin-top: 0.6rem;
+    }
     .check-ok { color: #1B5E20; font-size: 0.9rem; margin: -0.6rem 0 1rem; }
     .plain-text { color: #111; line-height: 1.9; white-space: pre-wrap; }
     .section-title { font-size: 1.2rem; font-weight: 800; margin: 0.8rem 0 0.3rem; }
@@ -259,7 +270,9 @@ def run(kind, value):
 
         status.update(label="✅ 다 바꿨어요", state="complete", expanded=False)
         # 검증은 결과가 끝까지 다 흘러나온 뒤 EasyKoreanStream 안에서 합니다.
-        st.session_state.output = {"result": stream.result, "original": str(masked_text), "check": stream.check}
+        output = {"result": stream.result, "original": str(masked_text), "check": stream.check}
+        output["help"] = pick_help(client, masked_text, stream.result)
+        st.session_state.output = output
     except Exception as error:  # 어떤 에러든 쉬운 말 안내로 바꿉니다.
         stream_area.empty()  # 흘려 보여주던 반쪽짜리 글은 지웁니다.
         status.update(label="⚠️ 바꾸지 못했어요", state="error", expanded=False)
@@ -292,6 +305,50 @@ def show_check(check):
         )
 
 
+def pick_help(client, masked_text, result):
+    """도움 고르기 (AI 호출 1번). 여기서 에러가 나도 위의 쉬운 한국어 결과는 그대로 둡니다."""
+    with st.spinner("🤖 도움 고르는 중…"):
+        try:
+            return choose_help(client, masked_text, result)
+        except Exception:
+            return "error"
+
+
+def show_help(plan):
+    """AI가 고른 도움만 보여줍니다. 고른 게 없으면 이 부분을 통째로 숨깁니다."""
+    if plan is None:
+        return
+    if plan == "error":
+        st.info("🤖 추가 도움을 불러오지 못했어요")
+        return
+    if plan.empty:
+        return
+    st.markdown('<div class="section-title">🤖 이 문서에 필요한 도움을 골랐어요</div>', unsafe_allow_html=True)
+    round_no = st.session_state.input_round
+
+    if plan.schedule:
+        st.download_button(
+            f"📅 폰 캘린더에 기한 넣기 ({plan.schedule.label})",
+            data=plan.schedule.ics.encode("utf-8"),
+            file_name="기한_일정.ics",
+            mime="text/calendar",
+            on_click="ignore",
+            use_container_width=True,
+        )
+        st.caption(f"일정 이름: {plan.schedule.title} · 3일 전과 전날 오전 9시에 알려줘요")
+
+    if plan.inquiry:
+        with st.expander("✉️ 문의할 문장 만들기"):
+            st.code(plan.inquiry, language=None, wrap_lines=True)
+            st.caption("오른쪽 위 복사 버튼을 누르면 복사돼요. [이름]은 내 이름으로 바꿔 주세요.")
+            st.markdown(f'<div class="relay-guide">{as_html(RELAY_107_GUIDE)}</div>', unsafe_allow_html=True)
+
+    if plan.checklist:
+        with st.expander("✅ 준비물 목록 보기"):
+            for i, item in enumerate(plan.checklist):
+                st.checkbox(item, key=f"checklist_{round_no}_{i}")
+
+
 def show_result(output):
     result = output["result"]
     check = output.get("check")
@@ -300,6 +357,7 @@ def show_result(output):
     sections = split_sections(result)
     if sections is None:
         show_check(check)
+        show_help(output.get("help"))
         st.markdown(f'<div class="plain-text">{as_html(result)}</div>', unsafe_allow_html=True)
     else:
         st.markdown(
@@ -308,6 +366,7 @@ def show_result(output):
             unsafe_allow_html=True,
         )
         show_check(check)
+        show_help(output.get("help"))
         st.markdown('<div class="section-title">💬 쉬운 설명</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="plain-text">{as_html(sections["[쉬운 설명]"])}</div>', unsafe_allow_html=True)
         with st.expander("📖 어려운 말 풀이"):

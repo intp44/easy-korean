@@ -321,3 +321,21 @@ def invented_report(check_result):
 def problems_report(check_result):
     """내려받는 파일 맨 아래에 붙일 [확인 필요] 글. 문제가 없으면 빈 글."""
     return "\n\n".join(part for part in (missing_report(check_result), invented_report(check_result)) if part)
+
+
+# ── 다른 단계(도움 고르기)에서 쓰는 확인 도구 ──────────
+def date_in_original(masked_original, year, month, day):
+    """이 날짜가 가린 원문에 있는지 봅니다. (있음, 원문에 적힌 연도) 두 값을 돌려줍니다.
+    원문에 연도 없이 월·일만 있으면 (True, None), 원문에 다른 연도로만 있으면 (False, None)."""
+    same_day = [item.key for item in extract(masked_original)
+                if item.key[0] == "날짜" and item.key[2:] == (month, day)]
+    if any(key[1] == year for key in same_day):
+        return True, year
+    if any(key[1] is None for key in same_day) or (not same_day and _date_anywhere(masked_original, month, day)):
+        return True, None
+    return False, None
+
+
+def number_digits(text):
+    """글에 있는 번호(전화·계좌 등)를 숫자만 남겨 모읍니다. (055) 000-1111처럼 나뉜 번호도 포함합니다."""
+    return {_digits(run) for run in NUMBER_RUN.findall(text)} | _number_keys(extract(text))

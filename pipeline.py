@@ -10,12 +10,16 @@
 2. EasyKoreanStream: 가린 원문을 쉬운 한국어로 바꾸며 조각을 하나씩 내보냅니다.
    끝까지 성공하면 결과를 원문과 대조 검증(verify_result)합니다.
    저장할 파일을 알려준 경우(터미널)에만 _result.txt로 저장하고, 중간에 오류가 나면 아무것도 저장하지 않습니다.
-3. explain_error: 어떤 오류든 쉬운 한국어 설명으로 바꿉니다.
+3. choose_help: (화면용) 변환·검증이 끝난 뒤 AI가 이 문서에 필요한 도움(일정, 문의 문장, 준비물)을 고릅니다.
+   AI 호출 1번. 실패해도 위의 결과에는 영향이 없도록 따로 부릅니다. (자세한 내용은 agent.py)
+4. explain_error: 어떤 오류든 쉬운 한국어 설명으로 바꿉니다.
 """
 
 from pathlib import Path
 
 import anthropic
+
+from agent import RELAY_107_GUIDE, HelpError, HelpPlan, choose_help  # noqa: F401 (화면이 pipeline에서 불러 씁니다)
 
 from image_prep import SUPPORTED_EXTENSIONS, ImageError, prepare_image
 from mark_personal import MarkError, mark_personal
