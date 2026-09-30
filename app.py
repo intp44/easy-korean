@@ -29,7 +29,7 @@ from pipeline import (
     prepare_photo,
     prepare_text,
 )
-from verify import missing_report
+from verify import problems_report
 
 BASE_DIR = Path(__file__).resolve().parent
 SECTION_TITLES = ["[해야 할 일]", "[쉬운 설명]", "[어려운 말 풀이]"]
@@ -73,6 +73,7 @@ st.markdown(
     .missing-box .box-title { font-size: 1.15rem; font-weight: 800; color: #7A0016; margin-bottom: 0.4rem; }
     .missing-box ul { margin: 0; padding-left: 1.2rem; }
     .missing-box li { font-size: 1.1rem; font-weight: 700; }
+    .missing-box + .missing-box, .missing-box.second { margin-top: 0.6rem; }
     .check-ok { color: #1B5E20; font-size: 0.9rem; margin: -0.6rem 0 1rem; }
     .plain-text { color: #111; line-height: 1.9; white-space: pre-wrap; }
     .section-title { font-size: 1.2rem; font-weight: 800; margin: 0.8rem 0 0.3rem; }
@@ -265,19 +266,30 @@ def run(kind, value):
         st.session_state.output = {"error": explain_error(error)}
 
 
-def show_check(check):
-    """원문 대조 검증 결과를 보여줍니다. 빠진 게 있으면 빠진 값을 직접 보여줍니다."""
-    if check is None or not check.checked:
-        return
-    if check.ok:
-        st.markdown('<div class="check-ok">✅ 원문의 날짜·금액·번호가 모두 들어있어요</div>', unsafe_allow_html=True)
-        return
-    items = "".join(f"<li>{as_html(item.kind)}: {as_html(item.value)}</li>" for item in check.missing)
+def warning_box(title, items, extra_class=""):
+    rows = "".join(f"<li>{as_html(item.kind)}: {as_html(item.value)}</li>" for item in items)
     st.markdown(
-        '<div class="missing-box"><div class="box-title">⚠️ 원문에 있는 정보 중 결과에 빠진 게 있어요. 꼭 확인하세요</div>'
-        f"<ul>{items}</ul></div>",
+        f'<div class="missing-box {extra_class}"><div class="box-title">{as_html(title)}</div><ul>{rows}</ul></div>',
         unsafe_allow_html=True,
     )
+
+
+def show_check(check):
+    """원문 대조 검증 결과를 보여줍니다. 문제가 있으면 해당 값을 직접 보여줍니다.
+    빠진 정보와 원문에 그대로 적혀 있지 않은 값은 따로 된 경고 상자로, 둘 다 있으면 둘 다 보여줍니다."""
+    if check is None or not check.anything_checked:
+        return
+    if check.all_ok:
+        st.markdown('<div class="check-ok">✅ 원문의 날짜·금액·번호와 결과가 서로 맞아요</div>', unsafe_allow_html=True)
+        return
+    if check.missing:
+        warning_box("⚠️ 원문에 있는 정보 중 결과에 빠진 게 있어요. 꼭 확인하세요", check.missing)
+    if check.invented:
+        warning_box(
+            "⚠️ 원문에 그대로 적혀 있지 않은 값이 있어요. AI가 계산하거나 새로 쓴 값일 수 있으니 원문과 비교해 확인하세요.",
+            check.invented,
+            "second" if check.missing else "",
+        )
 
 
 def show_result(output):
@@ -304,7 +316,7 @@ def show_result(output):
     with st.expander("📄 원문 보기 (개인정보는 가렸어요)"):
         st.markdown(f'<div class="original-text">{as_html(output["original"])}</div>', unsafe_allow_html=True)
 
-    report = missing_report(check)
+    report = problems_report(check)
     download_text = result + (f"\n\n{report}\n" if report else "\n")
     st.download_button(
         "⬇️ 결과 내려받기",

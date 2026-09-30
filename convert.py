@@ -90,14 +90,23 @@ def main():
     print(f"\n\n저장했습니다: {stream.saved_to}")
 
     print("\n===== 원문 대조 검증")
-    if not stream.check.checked:
+    check = stream.check
+    if not check.anything_checked:
         print("검사할 날짜·금액·번호가 없는 문서입니다.")
-    elif stream.check.ok:
-        print(f"✅ 원문의 날짜·금액·번호 {len(stream.check.checked)}개가 모두 들어있습니다.")
-    else:
+    elif check.all_ok:
+        print(f"✅ 원문의 날짜·금액·번호와 결과가 서로 맞습니다. (원문 {len(check.checked)}개, 결과 {len(check.result_checked)}개 확인)")
+    if check.missing:
         print("⚠️ 원문에 있는 정보 중 결과에 빠진 게 있습니다. 꼭 확인하세요.")
-        for item in stream.check.missing:
+        for item in check.missing:
             print(f"   - {item.kind}: {item.value}")
+    if check.invented:
+        print("⚠️ 원문에 그대로 적혀 있지 않은 값이 있습니다. AI가 계산하거나 새로 쓴 값일 수 있으니 원문과 비교해 확인하세요.")
+        for item in check.invented:
+            print(f"   - {item.kind}: {item.value}")
+    if check.year_added:
+        print("참고: 원문에는 연도가 없는데 결과에 연도가 붙은 날짜 (월·일이 같아서 통과)")
+        for item in check.year_added:
+            print(f"   - {item.value}")
     print("\n===== 걸린 시간")
     print(f"전체: {finished - started:.1f}초")
     if first_piece_at is not None:

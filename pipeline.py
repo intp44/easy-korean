@@ -122,9 +122,10 @@ def save_original(input_file, masked_text):
 def verify_result(masked_text, result):
     """원문과 결과 대조 검증
 
-    가린 원문(masked_text)의 날짜·금액·전화번호·계좌번호·이름표가 붙은 번호가
-    쉬운 한국어 결과(result)에 모두 들어 있는지 코드 규칙으로 확인합니다. (자세한 규칙은 verify.py)
-    돌려주는 값: .checked (검사한 정보 목록), .missing (빠진 정보 목록), .ok (빠진 게 없으면 True)
+    가린 원문(masked_text)과 쉬운 한국어 결과(result)의 날짜·금액·전화번호·계좌번호·이름표가 붙은 번호를
+    코드 규칙으로 두 방향 대조합니다. (자세한 규칙은 verify.py)
+    돌려주는 값: .missing (결과에 빠진 정보), .invented (원문에 없는 정보),
+                .year_added (원문에 없던 연도가 붙었지만 통과한 날짜), .all_ok (둘 다 문제없으면 True)
     """
     return check(masked_text, result)
 
@@ -139,7 +140,7 @@ class EasyKoreanStream:
             (조각을 화면에 이어 붙여 보여주기)
         stream.result      # 완성된 전체 결과
         stream.saved_to    # 저장한 파일 위치 (저장하지 않았으면 None)
-        stream.check       # 검증 결과 (.missing: 빠진 정보 목록)
+        stream.check       # 검증 결과 (.missing: 빠진 정보, .invented: 원문에 없는 정보)
 
     중간에 오류가 나면 for 문에서 오류가 나고, 아무것도 저장되지 않습니다.
     그때까지 보여준 조각은 완성된 결과가 아니므로 화면에서 지워야 합니다.
