@@ -8,7 +8,7 @@
    - prepare_photo / prepare_text: 메모리에 있는 사진·글로 준비 (화면용, 파일을 만들지 않음)
    이 단계는 끝까지 다 만든 다음 넘겨줍니다. 가리기 전 글이 먼저 보이면 안 되기 때문입니다.
 2. EasyKoreanStream: 가린 원문을 쉬운 한국어로 바꾸며 조각을 하나씩 내보냅니다.
-   끝까지 성공하면 결과를 검증 자리(verify_result)에 넘깁니다.
+   끝까지 성공하면 결과를 원문과 대조 검증(verify_result)합니다.
    저장할 파일을 알려준 경우(터미널)에만 _result.txt로 저장하고, 중간에 오류가 나면 아무것도 저장하지 않습니다.
 3. explain_error: 어떤 오류든 쉬운 한국어 설명으로 바꿉니다.
 """
@@ -22,6 +22,7 @@ from mark_personal import MarkError, mark_personal
 from redact import redact
 from simplify import ConvertError, MaskedText, stream_easy_korean
 from transcribe import TranscribeError, transcribe
+from verify import check
 
 RESULTS_DIR = Path(__file__).resolve().parent / "samples" / "results"
 
@@ -119,13 +120,13 @@ def save_original(input_file, masked_text):
 
 
 def verify_result(masked_text, result):
-    """[비어 있는 자리] 원문과 결과 대조 검증
+    """원문과 결과 대조 검증
 
-    나중에 여기에 날짜·금액·번호 등이 가린 원문(masked_text)과 쉬운 한국어 결과(result)에서
-    똑같이 들어 있는지 대조하는 기능을 넣습니다.
-    지금은 아무것도 검사하지 않고 None을 돌려줍니다.
+    가린 원문(masked_text)의 날짜·금액·전화번호·계좌번호·이름표가 붙은 번호가
+    쉬운 한국어 결과(result)에 모두 들어 있는지 코드 규칙으로 확인합니다. (자세한 규칙은 verify.py)
+    돌려주는 값: .checked (검사한 정보 목록), .missing (빠진 정보 목록), .ok (빠진 게 없으면 True)
     """
-    return None
+    return check(masked_text, result)
 
 
 class EasyKoreanStream:
@@ -138,7 +139,7 @@ class EasyKoreanStream:
             (조각을 화면에 이어 붙여 보여주기)
         stream.result      # 완성된 전체 결과
         stream.saved_to    # 저장한 파일 위치 (저장하지 않았으면 None)
-        stream.check       # 검증 결과 (지금은 None)
+        stream.check       # 검증 결과 (.missing: 빠진 정보 목록)
 
     중간에 오류가 나면 for 문에서 오류가 나고, 아무것도 저장되지 않습니다.
     그때까지 보여준 조각은 완성된 결과가 아니므로 화면에서 지워야 합니다.

@@ -88,6 +88,16 @@ def main():
     finished = time.perf_counter()
 
     print(f"\n\n저장했습니다: {stream.saved_to}")
+
+    print("\n===== 원문 대조 검증")
+    if not stream.check.checked:
+        print("검사할 날짜·금액·번호가 없는 문서입니다.")
+    elif stream.check.ok:
+        print(f"✅ 원문의 날짜·금액·번호 {len(stream.check.checked)}개가 모두 들어있습니다.")
+    else:
+        print("⚠️ 원문에 있는 정보 중 결과에 빠진 게 있습니다. 꼭 확인하세요.")
+        for item in stream.check.missing:
+            print(f"   - {item.kind}: {item.value}")
     print("\n===== 걸린 시간")
     print(f"전체: {finished - started:.1f}초")
     if first_piece_at is not None:
