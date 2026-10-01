@@ -273,3 +273,63 @@ def test_prompt_rules_reach_ai():
     assert "준비물이 아닙니다" in tools["make_checklist"]
     assert "이 도구를 꼭 고릅니다" in tools["draft_inquiry"]
     assert "쓰지 않습니다" in tools["draft_inquiry"]
+
+
+# ── 조건이 붙은 기한 ──────────────────────────────────
+REFUND = """지방세 과오납금 환급 안내
+4. 환급 예정일: 2026. 10. 15.
+
+환급계좌가 변경되었거나 잘못된 경우 2026. 10. 8.까지 아래로 연락하여 주시기 바랍니다.
+문의: 가상구청 세무1과 (032-000-5678)"""
+
+
+def schedule_for(original, day, title):
+    plan, _ = run([tool_block("make_schedule", {"date": day, "title": title})], original)
+    return plan.schedule
+
+
+def test_conditional_deadline_gets_note():
+    schedule = schedule_for(REFUND, "2026-10-08", "환급계좌 변경 확인 기한")
+    assert schedule.conditional
+    assert schedule.title == "환급계좌 변경 확인 기한 (해당하는 경우만)"
+    assert schedule.label == "10월 8일, 해당하는 경우만"           # 화면 버튼 글자
+    assert "SUMMARY:환급계좌 변경 확인 기한 (해당하는 경우만)" in schedule.ics.split("\r\n")   # 일정 파일 제목
+
+
+def test_unconditional_deadline_has_no_note():
+    schedule = schedule_for(FINE_NOTICE, "2026-10-20", "과태료 납부 기한")
+    assert not schedule.conditional
+    assert schedule.title == "과태료 납부 기한" and schedule.label == "10월 20일"
+
+
+def test_condition_word_in_other_sentence_does_not_count():
+    original = ("2026. 10. 20.까지 과태료를 납부하시기 바랍니다. "
+                "의견이 있는 경우 가상구청에 의견서를 제출할 수 있습니다.\n"
+                "감면 해당자는 증빙 서류를 함께 내세요.")
+    schedule = schedule_for(original, "2026-10-20", "과태료 납부 기한")
+    assert not schedule.conditional and schedule.title == "과태료 납부 기한"
+
+
+def test_title_already_has_condition():
+    schedule = schedule_for(REFUND, "2026-10-08", "환급 계좌 변경 기한 (계좌가 틀린 경우만)")
+    assert schedule.title == "환급 계좌 변경 기한 (계좌가 틀린 경우만)"
+    assert schedule.title.count("경우만") == 1 and not schedule.conditional
+
+
+def test_condition_words():
+    for sentence in ("감면 해당자는 2026. 10. 30.까지 신청하세요.",
+                     "지원을 원하는 해당하는 분은 10월 30일까지 신청하세요.",
+                     "서류가 빠진 경우 2026-10-30까지 다시 제출합니다."):
+        assert schedule_for(sentence, "2026-10-30", "신청 마감").conditional, sentence
+
+
+def test_same_date_also_in_unconditional_sentence():
+    # 같은 날짜가 조건 없는 문장에도 있으면 모두에게 해당하는 기한일 수 있으므로 붙이지 않습니다.
+    original = "신청 기간: 2026. 10. 30.까지\n서류가 빠진 경우에도 2026. 10. 30.까지 다시 내세요."
+    assert not schedule_for(original, "2026-10-30", "신청 마감").conditional
+
+
+def test_date_dots_do_not_split_sentence():
+    # '2026. 10. 8.'의 점에서 문장을 자르면 조건 말과 날짜가 떨어져 보입니다.
+    original = "잘못된 경우 2026. 10. 8. 까지 연락하세요."
+    assert schedule_for(original, "2026-10-08", "연락 기한").conditional

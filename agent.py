@@ -10,6 +10,7 @@
 
 AI가 넘긴 값은 코드가 한 번 더 확인합니다.
 - 일정 날짜가 가린 원문에 없으면 일정을 만들지 않습니다. (verify.py 규칙)
+- 일정 날짜가 있는 원문 문장에 "경우" 같은 조건 말이 있으면 제목 뒤에 "(해당하는 경우만)"을 붙입니다.
 - 문의 문장의 전화번호가 원문에 없으면 그 번호를 뺍니다.
 - 준비물은 원문에 거의 그대로 있어야 하고, 금액·계좌·번호가 들어 있으면 뺍니다.
 문의 문장의 앞부분(인사·[이름])과 뒷부분(청각장애 안내)은 AI가 아니라 코드가 붙입니다.
@@ -69,6 +70,12 @@ _SCHEMAS = {
 PHONE_IN_TEXT = re.compile(
     r"(?<![\d\-])(?:\(\s*0\d{1,2}\s*\)\s*\d{3,4}-\d{4}|0\d{1,2}[\s\-]\d{3,4}-\d{4}|1\d{3}-\d{4}|01\d\d{7,8})(?![\d\-])"
 )
+# 일정 날짜가 들어 있는 원문 문장에 이 말이 있으면 조건이 붙은 기한으로 봅니다. (좁게 시작)
+CONDITION_WORD = re.compile(r"경우|해당자|해당하는\s?분")
+# 제목에 이미 조건이 있으면 또 붙이지 않습니다.
+CONDITION_IN_TITLE = re.compile(r"경우|해당|때만|분만")
+CONDITION_NOTE = " (해당하는 경우만)"
+
 # 같은 줄에서 전화번호 앞에 이런 이름표가 있으면 "문의할 수 있는 번호"로 봅니다.
 CONTACT_LABEL = re.compile(r"문의|고객\s?센터|콜\s?센터|담당|상담")
 
@@ -94,10 +101,13 @@ class Schedule:
     day: date
     title: str
     ics: str   # 폰 캘린더에 넣을 일정 파일 내용
+    conditional: bool = False   # 원문에서 조건이 붙은 기한이라 코드가 제목에 "(해당하는 경우만)"을 붙였는지
 
     @property
     def label(self):
-        return f"{self.day.month}월 {self.day.day}일"
+        """화면 버튼에 쓰는 글자. 예: '10월 8일', '10월 8일, 해당하는 경우만'"""
+        day = f"{self.day.month}월 {self.day.day}일"
+        return f"{day}, 해당하는 경우만" if self.conditional else day
 
 
 @dataclass
@@ -153,7 +163,25 @@ def _check_schedule(value, masked_original, plan, today):
         year = today.year if (picked.month, picked.day) >= (today.month, today.day) else today.year + 1
         picked = picked.replace(year=year)
     title = (value.get("title") or "문서 기한").strip()[:40]
-    plan.schedule = Schedule(picked, title, make_ics(picked, title))
+    conditional = _is_conditional(masked_original, picked) and not CONDITION_IN_TITLE.search(title)
+    if conditional:
+        title += CONDITION_NOTE
+    plan.schedule = Schedule(picked, title, make_ics(picked, title), conditional)
+
+
+def _sentences_with_date(masked_original, day):
+    """이 월·일이 들어 있는 원문 문장들을 찾습니다. 문장은 줄바꿈이나 '~다.', '~요.' 뒤 띄어쓰기에서 나눕니다.
+    (날짜 속 점 '2026. 10. 8.'에서 문장을 자르지 않도록 '다.', '요.'만 문장 끝으로 봅니다)"""
+    date_pattern = re.compile(rf"(?<!\d)0?{day.month}\s*(?:월|[./\-])\s*0?{day.day}(?!\d)")
+    sentences = re.split(r"\n|(?<=[다요]\.)[ \t]+", masked_original)
+    return [sentence for sentence in sentences if date_pattern.search(sentence)]
+
+
+def _is_conditional(masked_original, day):
+    """날짜가 들어 있는 문장 모두에 조건 말이 있으면 True.
+    같은 날짜가 조건 없는 문장에도 있으면 모두에게 해당하는 기한일 수 있으므로 False."""
+    sentences = _sentences_with_date(masked_original, day)
+    return bool(sentences) and all(CONDITION_WORD.search(sentence) for sentence in sentences)
 
 
 def _check_inquiry(value, masked_original, plan):

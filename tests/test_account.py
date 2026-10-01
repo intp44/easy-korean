@@ -69,3 +69,27 @@ def test_mixed_document_keeps_payment_and_hides_refund():
 ])
 def test_not_an_account(text):
     assert hide(text) == text
+
+
+# ── 주민번호 모양의 붙은 13자리 계좌번호 ───────────────
+# 1101234567890은 앞 6자리(110123)가 날짜처럼 보여 주민번호 모양입니다.
+@pytest.mark.parametrize("text", [
+    "가상계좌 1101234567890",
+    "납부계좌: 가상은행 1101234567890",
+    "입금계좌\n가상은행 1101234567890",               # 이름표가 바로 윗줄에 있음
+])
+def test_rrn_shaped_payment_account_is_kept(text):
+    assert hide(text) == text
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("1101234567890", "1101234******"),                                  # 이름표 없음
+    ("계좌번호 1101234567890", "계좌번호 1101234******"),                  # 납부용 이름표가 아님
+    ("환급계좌 1101234567890", "환급계좌 1101234******"),                  # 본인 계좌
+    ("주민등록번호: 9001011234567", "주민등록번호: 9001011******"),         # 진짜 주민번호 모양
+    ("가상계좌 안내\n주민등록번호 9001011234567", "가상계좌 안내\n주민등록번호 9001011******"),  # 주민번호 이름표가 더 가까움
+    ("가상계좌 900101-1234567", "가상계좌 900101-1******"),                # - 로 나뉜 것은 계좌 모양이 아님
+    ("가상계좌 1109876543210\n본인 1101234567890", "가상계좌 1109876543210\n본인 1101234******"),
+])
+def test_rrn_shaped_number_without_payment_label_is_hidden(text, expected):
+    assert hide(text) == expected

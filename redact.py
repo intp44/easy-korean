@@ -75,7 +75,26 @@ def _star_digits(text):
     return re.sub(r"\d", "*", text)
 
 
+# 이 말이 번호 앞(같은 줄과 윗줄)에 있으면 계좌 이름표가 있어도 주민번호로 보고 가립니다.
+RRN_WORDS = re.compile(r"주민|외국인|등록\s?번호|생년월일")
+
+
+def _is_payment_account_not_rrn(match):
+    """'-' 없이 붙은 13자리 숫자가 주민번호 모양이어도, 바로 앞에 '가상계좌' 같은 납부용 이름표가 있으면
+    계좌번호로 봅니다. 이름표가 없거나 애매하면 False(주민번호로 가림)."""
+    if match.group(2):   # 900101-1234567처럼 나뉜 번호는 계좌 모양이 아니므로 늘 주민번호로 봅니다.
+        return False
+    text, start = match.string, match.start()
+    line_start = text.rfind("\n", 0, start) + 1
+    previous_line_start = text.rfind("\n", 0, max(0, line_start - 1)) + 1
+    if RRN_WORDS.search(text[previous_line_start:start]):
+        return False
+    return _is_payment_account(text, start)
+
+
 def _mask_rrn(match):
+    if _is_payment_account_not_rrn(match):
+        return match.group(0)   # 아래 계좌번호 규칙이 다시 판단합니다.
     return f"{match.group(1)}{match.group(2)}{match.group(3)}******"
 
 
