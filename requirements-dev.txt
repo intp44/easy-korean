@@ -1,0 +1,4 @@
+# 개발용 (내 컴퓨터에서 테스트할 때만 필요합니다. 배포 서버는 requirements.txt만 씁니다.)
+# 설치: pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==8.4.2

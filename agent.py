@@ -11,7 +11,9 @@
 AI가 넘긴 값은 코드가 한 번 더 확인합니다.
 - 일정 날짜가 가린 원문에 없으면 일정을 만들지 않습니다. (verify.py 규칙)
 - 문의 문장의 전화번호가 원문에 없으면 그 번호를 뺍니다.
-- 준비물이 원문과 전혀 겹치지 않으면 뺍니다.
+- 준비물은 원문에 거의 그대로 있어야 하고, 금액·계좌·번호가 들어 있으면 뺍니다.
+문의 문장의 앞부분(인사·[이름])과 뒷부분(청각장애 안내)은 AI가 아니라 코드가 붙입니다.
+AI가 문의 도구를 고르지 않았어도 원문에 문의·고객센터·담당자 전화번호가 있으면 코드가 문의 문장을 더합니다.
 AI에게는 개인정보를 가린 원문과 쉬운 한국어 결과만 보냅니다.
 """
 
@@ -33,6 +35,12 @@ RELAY_107_GUIDE = """📞 전화가 어려우면 107 손말이음센터를 이�
  · 카카오톡: '손말이음센터' 채널 추가
  · 365일 24시간 이용 가능"""
 
+# 문의 문장의 앞뒤는 코드가 늘 같은 모양으로 붙입니다. 화면의 "[이름]은 내 이름으로 바꿔 주세요" 안내와 짝입니다.
+INQUIRY_START = "안녕하세요. [이름]입니다."
+INQUIRY_END = "저는 청각장애가 있어 전화 통화가 어렵습니다. 문자로 답변 부탁드립니다. 감사합니다."
+# AI가 가운데 문장을 쓰지 않았거나 문의 도구를 고르지 않았을 때 코드가 쓰는 가운데 문장
+DEFAULT_INQUIRY = "받은 안내문에 대해 문의드립니다."
+
 _SCHEMAS = {
     "make_schedule": {
         "type": "object",
@@ -45,7 +53,7 @@ _SCHEMAS = {
     },
     "draft_inquiry": {
         "type": "object",
-        "properties": {"message": {"type": "string", "description": "기관에 보낼 문의 문장. 이름 자리는 [이름]"}},
+        "properties": {"message": {"type": "string", "description": "어떤 문서 때문에 무엇을 묻는지만 1~3문장. 인사·이름·청각장애 문장은 쓰지 않음"}},
         "required": ["message"],
         "additionalProperties": False,
     },
@@ -61,6 +69,20 @@ _SCHEMAS = {
 PHONE_IN_TEXT = re.compile(
     r"(?<![\d\-])(?:\(\s*0\d{1,2}\s*\)\s*\d{3,4}-\d{4}|0\d{1,2}[\s\-]\d{3,4}-\d{4}|1\d{3}-\d{4}|01\d\d{7,8})(?![\d\-])"
 )
+# 같은 줄에서 전화번호 앞에 이런 이름표가 있으면 "문의할 수 있는 번호"로 봅니다.
+CONTACT_LABEL = re.compile(r"문의|고객\s?센터|콜\s?센터|담당|상담")
+
+# AI가 가운데 문장에 또 쓰면 겹치는 문장: 인사, 이름 자리, 청각장애·문자 답변 부탁, 끝인사
+REPEATED_SENTENCE = re.compile(
+    r"안녕하|\[이름\]|청각|농인|전화\s?통화가?\s?(?:어렵|힘들)|문자로\s?(?:답|회신|연락)|감사합니다|고맙습니다"
+)
+
+# 준비물이 아닌 것: 금액(96,000원), 계좌·전화·고지번호 같은 긴 번호, 돈 내는 방법
+# "6개월", "1매", "2부"처럼 짧은 수량은 준비물 설명이라 남깁니다.
+MONEY_OR_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+|\d+\s*(?:만\s*)?원|\d[\d\-]{3,}")
+NOT_AN_ITEM_WORD = re.compile(r"계좌|납부|입금|이체|송금|번호")
+# 준비물이 원문에 "거의 그대로" 있다고 볼 기준 (글자의 80% 이상이 원문 조각과 같음)
+ITEM_MATCH_RATIO = 0.8
 
 
 class HelpError(Exception):
@@ -84,6 +106,7 @@ class HelpPlan:
     inquiry: str = None
     checklist: list = field(default_factory=list)
     dropped: list = field(default_factory=list)   # 원문과 안 맞아서 코드가 버린 것 (확인용)
+    added: list = field(default_factory=list)     # AI가 고르지 않았지만 코드가 더한 것 (확인용)
 
     @property
     def empty(self):
@@ -145,7 +168,32 @@ def _check_inquiry(value, masked_original, plan):
     # 번호를 뺀 자리에 남은 빈 괄호와 겹친 띄어쓰기를 정리합니다.
     message = re.sub(r"\(\s*\)", "", message)
     message = re.sub(r"[ \t]{2,}", " ", message).replace(" .", ".").replace(" ,", ",").strip()
-    plan.inquiry = message
+
+    # 앞뒤는 코드가 붙이므로, AI가 쓴 인사·이름·청각장애 문장은 빼서 겹치지 않게 합니다.
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", message):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        if REPEATED_SENTENCE.search(sentence):
+            plan.dropped.append(f"문의 문장: 코드가 붙이는 문장과 겹쳐서 뺌 ({sentence})")
+        else:
+            kept.append(sentence)
+    plan.inquiry = full_inquiry(" ".join(kept) or DEFAULT_INQUIRY)
+
+
+def full_inquiry(body):
+    """코드가 정한 앞부분 + 가운데 내용 + 코드가 정한 뒷부분"""
+    return f"{INQUIRY_START}\n{body}\n{INQUIRY_END}"
+
+
+def contact_phone(masked_original):
+    """원문에서 '문의', '고객센터', '담당자', '상담' 이름표가 같은 줄 앞에 붙은 전화번호를 찾습니다. 없으면 None."""
+    for line in masked_original.splitlines():
+        for match in PHONE_IN_TEXT.finditer(line):
+            if CONTACT_LABEL.search(line[: match.start()]):
+                return match.group(0)
+    return None
 
 
 _JOIN = r"(?:/|,|또는|혹은)"
@@ -164,22 +212,38 @@ def _remove_number(message, number):
     return message.replace(number, "[연락처]")
 
 
-def _hangul_pairs(text):
-    words = re.findall(r"[가-힣]{2,}", text)
-    return {word[i:i + 2] for word in words for i in range(len(word) - 1)}
+def _letters(text):
+    """띄어쓰기·문장부호를 빼고 한글·숫자·영문만 남깁니다."""
+    return re.sub(r"[^가-힣0-9A-Za-z]", "", text)
+
+
+def _match_ratio(item, original_letters):
+    """준비물 글자 중 원문에 그대로 있는 두 글자 이상 조각이 차지하는 비율 (0~1).
+    예: '사진 1매(최근 6개월 이내)' → '사진1매' + '최근6개월이내' 모두 원문에 있으면 1.0"""
+    letters = _letters(item)
+    if len(letters) < 2:
+        return 1.0 if letters and letters in original_letters else 0.0
+    covered, i = 0, 0
+    while i < len(letters):
+        length = next((n for n in range(len(letters) - i, 1, -1) if letters[i:i + n] in original_letters), 0)
+        covered += length
+        i += length or 1
+    return covered / len(letters)
 
 
 def _check_checklist(value, masked_original, plan):
-    original_pairs = _hangul_pairs(masked_original)
+    original_letters = _letters(masked_original)
     items = []
     for item in value.get("items") or []:
         item = str(item).strip()
         if not item or item in items:
             continue
-        if _hangul_pairs(item) & original_pairs:
-            items.append(item)
-        else:
+        if MONEY_OR_NUMBER.search(item) or NOT_AN_ITEM_WORD.search(item):
+            plan.dropped.append(f"준비물: 돈 내는 방법·금액·번호는 준비물이 아니라서 뺌 ({item})")
+        elif _match_ratio(item, original_letters) < ITEM_MATCH_RATIO:
             plan.dropped.append(f"준비물: 원문에 없는 것 같아 뺌 ({item})")
+        else:
+            items.append(item)
     plan.checklist = items
 
 
@@ -211,6 +275,13 @@ def choose_help(client, masked_text, result, today=None):
             _check_inquiry(block.input, masked_text, plan)
         elif block.name == "make_checklist" and not plan.checklist:
             _check_checklist(block.input, masked_text, plan)
+
+    # AI가 문의 도구를 고르지 않았어도, 원문에 문의할 전화번호가 있으면 기본 문의 문장을 더합니다.
+    if plan.inquiry is None:
+        phone = contact_phone(masked_text)
+        if phone:
+            plan.inquiry = full_inquiry(DEFAULT_INQUIRY)
+            plan.added.append(f"문의 문장: 원문에 문의 번호가 있어 기본 문장을 더함 ({phone})")
     return plan
 
 
