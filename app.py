@@ -3,7 +3,8 @@
 실행:
     streamlit run app.py
 
-화면은 pipeline.py가 제공하는 기능(원문 준비, 쉬운 한국어 스트림, 에러 설명)만 불러 씁니다.
+화면은 pipeline.py가 제공하는 기능(원문 준비, 쉬운 한국어 스트림, 에러 설명)과
+qa.py의 묻고 답하기 기능만 불러 씁니다.
 올린 사진과 글은 메모리에서만 쓰고, 서버에는 어떤 파일도 저장하지 않습니다.
 
 비밀 설정 (내 맥: .streamlit/secrets.toml / 배포: Streamlit Cloud의 Secrets 칸):
@@ -30,6 +31,16 @@ from pipeline import (
     explain_error,
     prepare_photo,
     prepare_text,
+)
+from qa import (
+    EXAMPLE_QUESTIONS,
+    FAILED_ANSWER,
+    NO_MORE_QUESTIONS,
+    Conversation,
+    QAError,
+    Turn,
+    mask_question,
+    unknown_warning,
 )
 from verify import problems_report
 
@@ -90,6 +101,8 @@ st.markdown(
     .section-title { font-size: 1.2rem; font-weight: 800; margin: 0.8rem 0 0.3rem; }
     .original-text { color: #111; line-height: 1.7; white-space: pre-wrap; font-size: 0.95rem; }
     .chosen { text-align: center; color: #111; margin: 0.4rem 0; }
+    /* 묻고 답하기: 답 아래 작은 경고 */
+    .qa-warning { color: #7A0016; font-size: 0.9rem; font-weight: 700; margin-top: 0.3rem; }
     .privacy-note { word-break: keep-all; text-align: center; color: #333; font-size: 0.85rem; margin-top: 2.5rem; }
     </style>
     """,
@@ -180,7 +193,9 @@ password_gate()
 # ── 화면 상태 ──────────────────────────────────────────
 # running: 바꾸는 중인지 / output: 마지막 결과나 에러 / source: 마지막으로 넣은 입력 종류
 # input_round: 입력 칸 번호. 끝나면 번호를 바꿔서 올린 사진·글을 비웁니다.
-for key, value in {"running": False, "output": None, "source": None, "input_round": 0, "notice": None}.items():
+# qa_pending: 답을 기다리는 질문 (가린 것). 묻고 답하기 기록은 output["qa"] 안에 있어서 새 문서를 바꾸면 함께 지워집니다.
+_DEFAULTS = {"running": False, "output": None, "source": None, "input_round": 0, "notice": None, "qa_pending": None}
+for key, value in _DEFAULTS.items():
     st.session_state.setdefault(key, value)
 
 
@@ -193,8 +208,9 @@ def start():
     if st.session_state.running:
         return
     st.session_state.running = True
-    st.session_state.output = None
+    st.session_state.output = None   # 이전 문서의 결과와 질문·답변을 함께 지웁니다.
     st.session_state.notice = None
+    st.session_state.qa_pending = None
 
 
 def pick_input(uploaded, pasted):
@@ -272,6 +288,7 @@ def run(kind, value):
         # 검증은 결과가 끝까지 다 흘러나온 뒤 EasyKoreanStream 안에서 합니다.
         output = {"result": stream.result, "original": str(masked_text), "check": stream.check}
         output["help"] = pick_help(client, masked_text, stream.result)
+        output["qa"] = Conversation(masked_text, stream.result)   # 이 문서의 질문·답변 (메모리에만)
         st.session_state.output = output
     except Exception as error:  # 어떤 에러든 쉬운 말 안내로 바꿉니다.
         stream_area.empty()  # 흘려 보여주던 반쪽짜리 글은 지웁니다.
@@ -385,6 +402,88 @@ def show_result(output):
         on_click="ignore",
         use_container_width=True,
     )
+    show_qa(output)
+
+
+# ── 묻고 답하기 ────────────────────────────────────────
+def ask_question(question):
+    """예시 버튼이나 입력 칸으로 질문했을 때. 답하는 중이거나 질문을 다 썼으면 아무것도 하지 않습니다 (중복 요금 방지).
+    질문은 여기서 바로 가린 뒤 기억합니다. 가리기 전 질문은 화면 상태에 남기지 않습니다."""
+    output = st.session_state.output or {}
+    conversation = output.get("qa")
+    question = (question or "").strip()
+    if conversation is None or st.session_state.qa_pending or conversation.remaining == 0 or not question:
+        return
+    st.session_state.qa_pending = mask_question(question)
+
+
+def submit_typed_question():
+    ask_question(st.session_state.get("qa_input"))
+
+
+def show_turn(turn):
+    with st.chat_message("user"):
+        st.markdown(f'<div class="plain-text">{as_html(turn.question)}</div>', unsafe_allow_html=True)
+    with st.chat_message("assistant"):
+        if turn.failed:
+            st.error(f"⚠️ {FAILED_ANSWER}")
+            return
+        st.markdown(f'<div class="plain-text">{as_html(turn.answer)}</div>', unsafe_allow_html=True)
+        warning = unknown_warning(turn.unknown)
+        if warning:
+            st.markdown(f'<div class="qa-warning">{as_html(warning)}</div>', unsafe_allow_html=True)
+
+
+def show_qa(output):
+    """쉬운 한국어 결과가 나온 뒤에만 보여줍니다. 질문과 답을 번갈아 보여주고, 새 답은 흘려 보여줍니다."""
+    conversation = output.get("qa")
+    if conversation is None:
+        return
+    st.markdown('<div class="section-title">💬 궁금한 걸 물어보세요</div>', unsafe_allow_html=True)
+
+    talk = st.container()
+    with talk:
+        for turn in conversation.turns:
+            show_turn(turn)
+
+    # 답을 기다리는 질문이 있으면, 입력 칸과 예시 버튼을 막은 채로 그립니다.
+    pending = st.session_state.qa_pending
+    busy = pending is not None
+    with st.container():
+        if conversation.remaining == 0:
+            st.info(f"💡 {NO_MORE_QUESTIONS}")
+        else:
+            st.caption(f"질문 {conversation.remaining}번 남았어요")
+        if conversation.used == 0 and conversation.remaining > 0:
+            for i, example in enumerate(EXAMPLE_QUESTIONS):
+                st.button(f"🙋 {example}", key=f"qa_example_{i}", on_click=ask_question, args=(example,),
+                          disabled=busy, use_container_width=True)
+        st.chat_input(
+            "답을 기다리는 중이에요…" if busy else "문서에 대해 궁금한 걸 써 주세요",
+            key="qa_input",
+            on_submit=submit_typed_question,
+            disabled=busy or conversation.remaining == 0,
+        )
+
+    if not busy:
+        return
+    # 흘려 보여주기 전에 비워 둡니다. 도중에 화면이 다시 그려져도 같은 질문을 또 보내지 않기 위해서입니다.
+    st.session_state.qa_pending = None
+    with talk:
+        with st.chat_message("user"):
+            st.markdown(f'<div class="plain-text">{as_html(pending)}</div>', unsafe_allow_html=True)
+        with st.chat_message("assistant"):
+            answer_area = st.empty()
+            client = get_client()
+            try:
+                if client is None:
+                    conversation.turns.append(Turn(pending, failed=True))
+                else:
+                    with answer_area.container():
+                        st.write_stream(for_screen(conversation.ask(client, pending)))
+            except QAError:
+                pass   # 실패한 질문은 conversation에 기록되어, 다시 그릴 때 그 질문에만 안내가 나옵니다.
+    st.rerun()
 
 
 # ── 화면 ──────────────────────────────────────────────
