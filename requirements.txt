@@ -1,7 +1,27 @@
+# 쉬운말 도우미 실행에 필요한 라이브러리
+#
+# 설치: pip install -r requirements.txt
+# 배포 서버(Streamlit Community Cloud)도 이 파일을 읽어 설치합니다.
+#
 # 배포 서버에서 버전이 달라 깨지지 않도록 버전을 고정했습니다.
 # (내 맥 가상환경에서 실제로 시험한 버전 / Python 3.9~3.13에서 설치 가능)
-anthropic==0.125.0
-python-dotenv==1.2.1
-pillow==11.3.0
-pillow-heif==1.1.1
+# 버전을 바꾸면 반드시 테스트(pytest)를 다시 돌려 확인하세요.
+
+# 웹 화면 (app.py)
 streamlit==1.50.0
+
+# Claude API 연결: 글자 읽기, 쉬운 한국어 변환, 도움 고르기, 묻고 답하기
+anthropic==0.125.0
+
+# 인터넷 연결 오류 처리 (simplify.py, 테스트에서 직접 사용)
+# anthropic을 설치하면 함께 깔리지만, 코드에서 직접 쓰므로 따로 적어 둡니다.
+httpx==0.28.1
+
+# 사진 준비: 회전, 크기 줄이기 (image_prep.py)
+pillow==11.3.0
+
+# 아이폰 사진(HEIC)을 열기 위한 확장 (image_prep.py)
+pillow-heif==1.1.1
+
+# 내 컴퓨터에서 .env 파일의 API 키 읽기 (배포 서버는 Secrets를 씀)
+python-dotenv==1.2.1
